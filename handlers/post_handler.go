@@ -70,7 +70,25 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, posts, http.StatusOK)
+	// Marshal the posts data with indentation
+	jsonData, err := json.MarshalIndent(posts, "", "    ")
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set Content-Type header to application/json
+	w.Header().Set("Content-Type", "application/json")
+
+	// Write the JSON response
+	_, err = w.Write(jsonData)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with the status code
+	w.WriteHeader(http.StatusOK)
 }
 
 func fetchPosts(ctx context.Context) ([]Post, error) {
@@ -136,7 +154,25 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, post, http.StatusOK)
+	// Marshal the post data with indentation
+	jsonData, err := json.MarshalIndent(post, "", "    ")
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set Content-Type header to application/json
+	w.Header().Set("Content-Type", "application/json")
+
+	// Write the JSON response
+	_, err = w.Write(jsonData)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with the status code
+	w.WriteHeader(http.StatusOK)
 }
 
 func fetchPost(ctx context.Context, postID string) (Post, error) {
