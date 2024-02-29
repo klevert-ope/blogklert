@@ -27,11 +27,6 @@ func (e *AppError) Error() string {
 	return e.Message
 }
 
-// ResponseError represents an error response.
-type ResponseError struct {
-	Error string `json:"error"`
-}
-
 // Post represents a blog post.
 type Post struct {
 	ID        int        `json:"id"`
@@ -47,6 +42,9 @@ var redisClient *redis.Client
 func init() {
 	// Initialize Redis client
 	redisClient = db.GetRedisClient()
+	if redisClient == nil {
+		log.Fatal("Failed to initialize Redis client")
+	}
 }
 
 // SetupPostRoutes sets up routes and middleware.
@@ -66,14 +64,16 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	// Fetch data from cache or database
 	posts, err := fetchPosts(ctx)
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("Error fetching posts: %v", err)
+		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
 		return
 	}
 
 	// Marshal the posts data with indentation
 	jsonData, err := json.MarshalIndent(posts, "", "    ")
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("Error marshalling posts data: %v", err)
+		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
 		return
 	}
 
@@ -81,14 +81,11 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// Write the JSON response
-	_, err = w.Write(jsonData)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if _, err := w.Write(jsonData); err != nil {
+		log.Printf("Error writing response: %v", err)
+		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
 		return
 	}
-
-	// Respond with the status code
-	w.WriteHeader(http.StatusOK)
 }
 
 func fetchPosts(ctx context.Context) ([]Post, error) {
@@ -119,7 +116,7 @@ func fetchPosts(ctx context.Context) ([]Post, error) {
 	for rows.Next() {
 		var post Post
 		if err := rows.Scan(&post.ID, &post.Title, &post.Excerpt, &post.Body, &post.CreatedAt, &post.UpdatedAt); err != nil {
-			log.Println("Error scanning row:", err)
+			log.Printf("Error scanning row: %v", err)
 			continue
 		}
 		posts = append(posts, post)
@@ -150,6 +147,7 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 	// Fetch data from cache or database
 	post, err := fetchPost(ctx, postID)
 	if err != nil {
+		log.Printf("Error fetching post: %v", err)
 		http.Error(w, "Post not found", http.StatusNotFound)
 		return
 	}
@@ -157,7 +155,8 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 	// Marshal the post data with indentation
 	jsonData, err := json.MarshalIndent(post, "", "    ")
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("Error marshalling post data: %v", err)
+		http.Error(w, "Failed to fetch post", http.StatusInternalServerError)
 		return
 	}
 
@@ -165,14 +164,11 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// Write the JSON response
-	_, err = w.Write(jsonData)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if _, err := w.Write(jsonData); err != nil {
+		log.Printf("Error writing response: %v", err)
+		http.Error(w, "Failed to fetch post", http.StatusInternalServerError)
 		return
 	}
-
-	// Respond with the status code
-	w.WriteHeader(http.StatusOK)
 }
 
 func fetchPost(ctx context.Context, postID string) (Post, error) {
@@ -224,6 +220,7 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 
 	var post Post
 	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
+		log.Printf("Error decoding JSON: %v", err)
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -239,7 +236,8 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := insertPost(post); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("Error inserting post: %v", err)
+		http.Error(w, "Failed to create post", http.StatusInternalServerError)
 		return
 	}
 
@@ -265,6 +263,7 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
 	if err != nil {
+		log.Printf("Error converting ID to integer: %v", err)
 		http.Error(w, "Invalid ID parameter", http.StatusBadRequest)
 		return
 	}
@@ -277,6 +276,7 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 
 	var post Post
 	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
+		log.Printf("Error decoding JSON: %v", err)
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -287,13 +287,14 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	post.Body = middleware.SanitizeInput(post.Body, 1000)
 
 	if err := post.Validate(); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	post.ID = id // Set the ID of the post
 	if err := updatePost(post); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("Error updating post: %v", err)
+		http.Error(w, "Failed to update post", http.StatusInternalServerError)
 		return
 	}
 
@@ -322,6 +323,7 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
 	if err != nil {
+		log.Printf("Error converting ID to integer: %v", err)
 		http.Error(w, "Invalid ID parameter", http.StatusBadRequest)
 		return
 	}
@@ -332,7 +334,8 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := deletePost(id); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("Error deleting post: %v", err)
+		http.Error(w, "Failed to delete post", http.StatusInternalServerError)
 		return
 	}
 
@@ -359,11 +362,20 @@ func (p *Post) Validate() error {
 	if p.Title == "" {
 		return errors.New("title cannot be empty")
 	}
+	if len(p.Title) > 60 {
+		return errors.New("title exceeds maximum length of 60 characters")
+	}
 	if p.Excerpt == "" {
 		return errors.New("excerpt cannot be empty")
 	}
+	if len(p.Excerpt) > 250 {
+		return errors.New("excerpt exceeds maximum length of 250 characters")
+	}
 	if p.Body == "" {
 		return errors.New("body cannot be empty")
+	}
+	if len(p.Body) > 1000 {
+		return errors.New("body exceeds maximum length of 1000 characters")
 	}
 	return nil
 }
