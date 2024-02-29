@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"github.com/gorilla/csrf"
 	"net/http"
 )
 
@@ -12,7 +11,7 @@ func Cors(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8000")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "false")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'")
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -23,18 +22,7 @@ func Cors(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		// Set CSRF token in the response headers
-		csrfToken := csrf.Token(r)
-		w.Header().Set("X-CSRF-Token", csrfToken)
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// RouteWithMiddleware wraps the given handler with middleware chain
-func RouteWithMiddleware(handler http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
-	for _, mw := range mws {
-		handler = mw(handler)
-	}
-	return handler
 }
