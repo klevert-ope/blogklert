@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/gorilla/csrf"
 	"log"
 	"net/http"
 	"os"
@@ -23,19 +22,28 @@ func main() {
 		log.Fatalf("Error initializing database: %v", err)
 	}
 
-	// Create CSRF middleware
-	csrfPASS := os.Getenv("CSRF_PASS")
-	csrfMiddleware := csrf.Protect([]byte(csrfPASS), csrf.Secure(false))
+	// Load the Bearer token from environment variable
+	bearerToken := os.Getenv("BEARER_TOKEN")
+	if bearerToken == "" {
+		log.Fatal("Bearer Token environment variable (BEARER_TOKEN) is not set")
+	}
+
 	rateLimiter := middleware.NewRateLimiter()
 
 	route := http.NewServeMux()
 	route.Handle("/posts", handlers.SetupPostRoutes())
 	route.Handle("/posts/{id}", handlers.SetupPostRoutes())
 	route.HandleFunc("/", handlers.RootHandler)
-	route.HandleFunc("/csrf-token", handlers.CsrfHandler)
 
 	// Apply middleware to all requests by wrapping the handler with middleware chain
-	http.Handle("/", middleware.RouteWithMiddleware(route, middleware.Cors, rateLimiter.Limit, csrfMiddleware))
+	http.Handle("/",
+		middleware.RouteWithMiddleware(
+			route,
+			middleware.Cors,
+			rateLimiter.Limit,
+			middleware.ValidateBearerToken(bearerToken),
+		),
+	)
 
 	srv := &http.Server{
 		Addr:           ":8000",
