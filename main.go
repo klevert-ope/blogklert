@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/gorilla/mux"
 	"log"
 	"net/http"
 	"os"
@@ -28,17 +29,34 @@ func main() {
 		log.Fatal("Bearer Token environment variable (BEARER_TOKEN) is not set")
 	}
 
+	storageAccount := os.Getenv("STORAGE_ACCOUNT_ENDPOINT")
+	if storageAccount == "" {
+		log.Fatal("Storage Account endpoint environment variable (STORAGE_ACCOUNT_ENDPOINT) is not set")
+	}
+
+	// Load the container name from environment variable
+	containerName := os.Getenv("CONTAINER_NAME")
+	if containerName == "" {
+		log.Fatal("Container Name environment variable (CONTAINER_NAME) is not set")
+	}
+
+	// Load the CDN endpoint URL from environment variable
+	cdnEndpoint := os.Getenv("CDN_ENDPOINT_URL")
+	if cdnEndpoint == "" {
+		log.Fatal("CDN Endpoint URL environment variable (CDN_ENDPOINT_URL) is not set")
+	}
+
 	rateLimiter := middleware.NewRateLimiter()
 
-	route := http.NewServeMux()
-	route.Handle("/posts", handlers.SetupPostRoutes())
-	route.Handle("/posts/{id}", handlers.SetupPostRoutes())
-	route.HandleFunc("/", handlers.RootHandler)
+	router := mux.NewRouter()
+	handlers.SetupPostRoutes(router)
+	router.HandleFunc("/", handlers.RootHandler)
+	router.HandleFunc("/upload", handlers.UploadFileHandler).Methods("POST")
 
 	// Apply middleware to all requests by wrapping the handler with middleware chain
 	http.Handle("/",
 		middleware.RouteWithMiddleware(
-			route,
+			router,
 			middleware.Cors,
 			rateLimiter.Limit,
 			middleware.ValidateBearerToken(bearerToken),
