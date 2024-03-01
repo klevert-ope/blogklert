@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
@@ -29,7 +29,7 @@ func (e *AppError) Error() string {
 
 // Post represents a blog post.
 type Post struct {
-	ID        int        `json:"id"`
+	ID        uuid.UUID  `json:"id"`
 	Title     string     `json:"title"`
 	Excerpt   string     `json:"excerpt"`
 	Body      string     `json:"body"`
@@ -48,17 +48,24 @@ func init() {
 }
 
 // SetupPostRoutes sets up routes and middleware.
-func SetupPostRoutes() *mux.Router {
-	r := mux.NewRouter()
+func SetupPostRoutes(r *mux.Router) {
 	r.HandleFunc("/posts", GetPosts).Methods("GET")
-	r.HandleFunc("/posts/{id}", GetPost).Methods("GET")
+	r.HandleFunc("/posts", GetPost).Methods("GET").Queries("id", "{id}")
 	r.HandleFunc("/posts", CreatePost).Methods("POST")
-	r.HandleFunc("/posts/{id}", UpdatePost).Methods("PUT")
-	r.HandleFunc("/posts/{id}", DeletePost).Methods("DELETE")
-	return r
+	r.HandleFunc("/posts", UpdatePost).Methods("PUT").Queries("id", "{id}")
+	r.HandleFunc("/posts", DeletePost).Methods("DELETE").Queries("id", "{id}")
 }
 
 func GetPosts(w http.ResponseWriter, r *http.Request) {
+	// Get the value of the "id" query parameter
+	id := r.URL.Query().Get("id")
+	if id != "" {
+		// If "id" is provided, call GetPost handler with the provided id
+		GetPost(w, r)
+		return
+	}
+
+	// If "id" is not provided, continue with fetching all posts
 	ctx := r.Context()
 
 	// Fetch data from cache or database
@@ -130,7 +137,8 @@ func fetchPosts(ctx context.Context) ([]Post, error) {
 	if err != nil {
 		log.Printf("Error marshalling posts data: %v", err)
 	} else {
-		CacheTime := 3600 * time.Second
+		// CacheTime set to 7 days (604800000 Millisecond)
+		const CacheTime = 7 * 24 * time.Hour / time.Millisecond
 		if err := redisClient.Set(ctx, "posts", jsonData, CacheTime).Err(); err != nil {
 			log.Printf("Error caching posts data: %v", err)
 		}
@@ -140,12 +148,18 @@ func fetchPosts(ctx context.Context) ([]Post, error) {
 }
 
 func GetPost(w http.ResponseWriter, r *http.Request) {
+	// Get the value of the "id" query parameter
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		// If "id" is not provided, return a bad request response
+		http.Error(w, "ID parameter is required", http.StatusBadRequest)
+		return
+	}
+
 	ctx := r.Context()
-	params := mux.Vars(r)
-	postID := params["id"]
 
 	// Fetch data from cache or database
-	post, err := fetchPost(ctx, postID)
+	post, err := fetchPost(ctx, idStr)
 	if err != nil {
 		log.Printf("Error fetching post: %v", err)
 		http.Error(w, "Post not found", http.StatusNotFound)
@@ -201,7 +215,8 @@ func fetchPost(ctx context.Context, postID string) (Post, error) {
 	if err != nil {
 		log.Printf("Error marshalling post data: %v", err)
 	} else {
-		CacheTime := 3600 * time.Second
+		// CacheTime set to 7 days (604800000 Millisecond)
+		const CacheTime = 7 * 24 * time.Hour / time.Millisecond
 		if err := redisClient.Set(ctx, "post:"+postID, jsonData, CacheTime).Err(); err != nil {
 			log.Printf("Error caching post %s data: %v", postID, err)
 		}
@@ -260,20 +275,31 @@ func insertPost(post Post) error {
 
 func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
+
+	// Extract the post ID from query parameters
+	postID := r.URL.Query().Get("id")
+	if postID == "" {
+		log.Println("Post ID is required")
+		http.Error(w, "Post ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse post ID to UUID
+	id, err := uuid.Parse(postID)
 	if err != nil {
-		log.Printf("Error converting ID to integer: %v", err)
+		log.Printf("Error parsing ID to UUID: %v", err)
 		http.Error(w, "Invalid ID parameter", http.StatusBadRequest)
 		return
 	}
 
+	// Validate content type
 	contentType := r.Header.Get("Content-Type")
 	if contentType != "application/json" {
 		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
 		return
 	}
 
+	// Decode JSON payload
 	var post Post
 	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
 		log.Printf("Error decoding JSON: %v", err)
@@ -286,12 +312,16 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	post.Excerpt = middleware.SanitizeInput(post.Excerpt, 250)
 	post.Body = middleware.SanitizeInput(post.Body, 1000)
 
+	// Validate post fields
 	if err := post.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	post.ID = id // Set the ID of the post
+	// Set the ID of the post
+	post.ID = id
+
+	// Update the post
 	if err := updatePost(post); err != nil {
 		log.Printf("Error updating post: %v", err)
 		http.Error(w, "Failed to update post", http.StatusInternalServerError)
@@ -299,8 +329,9 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Invalidate the cache for both the updated post and the list of all posts
-	if err := redisClient.Del(ctx, "post:"+params["id"]).Err(); err != nil {
-		log.Printf("Error invalidating cache for post %s: %v", params["id"], err)
+	postCacheKey := "post:" + postID
+	if err := redisClient.Del(ctx, postCacheKey).Err(); err != nil {
+		log.Printf("Error invalidating cache for post %s: %v", postID, err)
 	}
 	if err := redisClient.Del(ctx, "posts").Err(); err != nil {
 		log.Printf("Error invalidating cache for posts: %v", err)
@@ -320,10 +351,13 @@ func updatePost(post Post) error {
 
 func DeletePost(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
+	queryParams := r.URL.Query()
+	postID := queryParams.Get("id")
+
+	// Parse postID to UUID
+	id, err := uuid.Parse(postID)
 	if err != nil {
-		log.Printf("Error converting ID to integer: %v", err)
+		log.Printf("Error parsing ID to UUID: %v", err)
 		http.Error(w, "Invalid ID parameter", http.StatusBadRequest)
 		return
 	}
@@ -340,8 +374,9 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Invalidate the cache for both the deleted post and the list of all posts
-	if err := redisClient.Del(ctx, "post:"+params["id"]).Err(); err != nil {
-		log.Printf("Error invalidating cache for post %s: %v", params["id"], err)
+	postCacheKey := "post:" + postID
+	if err := redisClient.Del(ctx, postCacheKey).Err(); err != nil {
+		log.Printf("Error invalidating cache for post %s: %v", postID, err)
 	}
 	if err := redisClient.Del(ctx, "posts").Err(); err != nil {
 		log.Printf("Error invalidating cache for posts: %v", err)
@@ -350,7 +385,7 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, nil, http.StatusNoContent)
 }
 
-func deletePost(id int) error {
+func deletePost(id uuid.UUID) error {
 	_, err := db.DB.Exec("DELETE FROM posts WHERE id = $1", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete post: %w", err)
