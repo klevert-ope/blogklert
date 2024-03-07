@@ -2,11 +2,12 @@ package middleware
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 // SanitizeInput sanitizes user input to prevent SQL injection
-func SanitizeInput(input string, maxLength int) string {
+func SanitizeInput(input string, maxWordCount int) string {
 	// Escape single quotes
 	sanitizedInput := strings.ReplaceAll(input, "'", "''")
 
@@ -14,7 +15,7 @@ func SanitizeInput(input string, maxLength int) string {
 	sanitizedInput = removeSpecialCharacters(sanitizedInput)
 
 	// Limit input length to prevent buffer overflows and DoS attacks
-	sanitizedInput = truncateString(sanitizedInput, maxLength)
+	sanitizedInput = truncateString(sanitizedInput, maxWordCount)
 
 	return sanitizedInput
 }
@@ -87,12 +88,28 @@ func isCommonSymbol(r rune) bool {
 	return commonSymbols[r]
 }
 
-// truncateString truncates the input string to the specified maximum length
-func truncateString(input string, maxLength int) string {
-	if utf8.RuneCountInString(input) > maxLength {
+// truncateString truncates the input string to the specified maximum length per word
+func truncateString(input string, maxWordCount int) string {
+	if utf8.RuneCountInString(input) > maxWordCount {
 		// Truncate the string if it exceeds the maximum length
-		runes := []rune(input)
-		return string(runes[:maxLength])
+		var truncatedRunes []rune
+		var currentLength int
+		for _, r := range input {
+			if unicode.IsSpace(r) || unicode.IsPunct(r) {
+				// Add space or punctuation to the truncated string
+				truncatedRunes = append(truncatedRunes, r)
+				currentLength = 0 // Reset current word length counter
+			} else {
+				// Add non-space and non-punctuation characters to the truncated string
+				truncatedRunes = append(truncatedRunes, r)
+				currentLength++
+				if currentLength >= maxWordCount {
+					// If the current word length exceeds the maximum length, break
+					break
+				}
+			}
+		}
+		return string(truncatedRunes)
 	}
 	return input
 }

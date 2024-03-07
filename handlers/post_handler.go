@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -17,17 +18,11 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// AppError represents a custom application error.
 type AppError struct {
 	Message string `json:"message"`
 	Code    int    `json:"-"`
 }
 
-func (e *AppError) Error() string {
-	return e.Message
-}
-
-// Post represents a blog post.
 type Post struct {
 	ID        uuid.UUID  `json:"id"`
 	Title     string     `json:"title"`
@@ -47,7 +42,6 @@ func init() {
 	}
 }
 
-// SetupPostRoutes sets up routes and middleware.
 func SetupPostRoutes(r *mux.Router) {
 	r.HandleFunc("/posts", GetPosts).Methods("GET")
 	r.HandleFunc("/posts", GetPost).Methods("GET").Queries("id", "{id}")
@@ -233,6 +227,7 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Decode JSON payload directly into a Post struct
 	var post Post
 	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
 		log.Printf("Error decoding JSON: %v", err)
@@ -241,15 +236,17 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize post fields
-	post.Title = middleware.SanitizeInput(post.Title, 60)
-	post.Excerpt = middleware.SanitizeInput(post.Excerpt, 250)
-	post.Body = middleware.SanitizeInput(post.Body, 1000)
+	post.Title = middleware.SanitizeInput(post.Title, 15)
+	post.Excerpt = middleware.SanitizeInput(post.Excerpt, 150)
+	post.Body = middleware.SanitizeInput(post.Body, 1500)
 
+	// Validate post fields
 	if err := post.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Insert the post into the database
 	if err := insertPost(post); err != nil {
 		log.Printf("Error inserting post: %v", err)
 		http.Error(w, "Failed to create post", http.StatusInternalServerError)
@@ -299,7 +296,7 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decode JSON payload
+	// Decode JSON payload directly into a Post struct
 	var post Post
 	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
 		log.Printf("Error decoding JSON: %v", err)
@@ -308,9 +305,9 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize post fields
-	post.Title = middleware.SanitizeInput(post.Title, 60)
-	post.Excerpt = middleware.SanitizeInput(post.Excerpt, 250)
-	post.Body = middleware.SanitizeInput(post.Body, 1000)
+	post.Title = middleware.SanitizeInput(post.Title, 15)
+	post.Excerpt = middleware.SanitizeInput(post.Excerpt, 150)
+	post.Body = middleware.SanitizeInput(post.Body, 1500)
 
 	// Validate post fields
 	if err := post.Validate(); err != nil {
@@ -397,22 +394,31 @@ func (p *Post) Validate() error {
 	if p.Title == "" {
 		return errors.New("title cannot be empty")
 	}
-	if len(p.Title) > 60 {
-		return errors.New("title exceeds maximum length of 60 characters")
+	if wordCount(p.Title) > 15 {
+		return errors.New("title exceeds maximum word count of 15")
 	}
 	if p.Excerpt == "" {
 		return errors.New("excerpt cannot be empty")
 	}
-	if len(p.Excerpt) > 250 {
-		return errors.New("excerpt exceeds maximum length of 250 characters")
+	if wordCount(p.Excerpt) > 150 {
+		return errors.New("excerpt exceeds maximum word count of 150")
 	}
 	if p.Body == "" {
 		return errors.New("body cannot be empty")
 	}
-	if len(p.Body) > 1000 {
-		return errors.New("body exceeds maximum length of 1000 characters")
+	if wordCount(p.Body) > 1500 {
+		return errors.New("body exceeds maximum word count of 1500")
 	}
 	return nil
+}
+
+func wordCount(s string) int {
+	words := strings.Fields(s)
+	return len(words)
+}
+
+func (e *AppError) Error() string {
+	return e.Message
 }
 
 func respondJSON(w http.ResponseWriter, data interface{}, statusCode int) {
