@@ -45,6 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error initializing database: %v", err)
 	}
+	defer db.CloseDB()
 
 	router := mux.NewRouter()
 	handlers.SetupRootRoute(router)

@@ -18,36 +18,37 @@ import (
 	"github.com/gorilla/mux"
 )
 
+type Posts struct {
+	ID        uuid.UUID `json:"id"`
+	Title     string    `json:"title"`
+	Excerpt   string    `json:"excerpt"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type AppError struct {
 	Message string `json:"message"`
 	Code    int    `json:"-"`
 }
 
-type Post struct {
-	ID        uuid.UUID  `json:"id"`
-	Title     string     `json:"title"`
-	Excerpt   string     `json:"excerpt"`
-	Body      string     `json:"body"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt *time.Time `json:"updated_at"`
-}
-
 var redisClient *redis.Client
 
 func init() {
-	// Initialize Redis client
-	redisClient = db.GetRedisClient()
-	if redisClient == nil {
-		log.Fatal("Failed to initialize Redis client")
+	var err error
+	redisClient, err = db.GetRedisClient()
+	if err != nil {
+		log.Fatalf("Failed to initialize Redis client: %v", err)
 	}
+	log.Println("Redis connection initialized successfully.")
 }
 
 func SetupPostRoutes(r *mux.Router) {
-	r.HandleFunc("/posts", GetPosts).Methods("GET")
-	r.HandleFunc("/posts", GetPost).Methods("GET").Queries("id", "{id}")
-	r.HandleFunc("/posts", CreatePost).Methods("POST")
-	r.HandleFunc("/posts", UpdatePost).Methods("PUT").Queries("id", "{id}")
-	r.HandleFunc("/posts", DeletePost).Methods("DELETE").Queries("id", "{id}")
+	postsRouter := r.PathPrefix("/posts").Subrouter()
+	postsRouter.HandleFunc("", GetPosts).Methods("GET")
+	postsRouter.HandleFunc("", GetPost).Methods("GET").Queries("id", "{id}")
+	postsRouter.HandleFunc("", CreatePost).Methods("POST")
+	postsRouter.HandleFunc("", UpdatePost).Methods("PUT").Queries("id", "{id}")
+	postsRouter.HandleFunc("", DeletePost).Methods("DELETE").Queries("id", "{id}")
 }
 
 func GetPosts(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +67,7 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	posts, err := fetchPosts(ctx)
 	if err != nil {
 		log.Printf("Error fetching posts: %v", err)
-		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
+		http.Error(w, "Failed to fetch posts from db", http.StatusInternalServerError)
 		return
 	}
 
@@ -74,12 +75,9 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	jsonData, err := json.MarshalIndent(posts, "", "    ")
 	if err != nil {
 		log.Printf("Error marshalling posts data: %v", err)
-		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
+		http.Error(w, "Failed to fetch json posts", http.StatusInternalServerError)
 		return
 	}
-
-	// Set Content-Type header to application/json
-	w.Header().Set("Content-Type", "application/json")
 
 	// Write the JSON response
 	if _, err := w.Write(jsonData); err != nil {
@@ -89,11 +87,10 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fetchPosts(ctx context.Context) ([]Post, error) {
-	// Check if the data is cached in Redis
+func fetchPosts(ctx context.Context) ([]Posts, error) {
 	cachedData, err := redisClient.Get(ctx, "posts").Result()
 	if err == nil {
-		var posts []Post
+		var posts []Posts
 		if err := json.Unmarshal([]byte(cachedData), &posts); err != nil {
 			return nil, fmt.Errorf("error unmarshalling cached posts data: %w", err)
 		}
@@ -102,8 +99,7 @@ func fetchPosts(ctx context.Context) ([]Post, error) {
 		return nil, fmt.Errorf("error fetching posts from Redis cache: %w", err)
 	}
 
-	// Data not found in cache, fetch from the database
-	rows, err := db.DB.QueryContext(ctx, "SELECT * FROM posts")
+	rows, err := db.DB.QueryContext(ctx, "SELECT id, title, excerpt, body, created_at FROM posts")
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %w", err)
 	}
@@ -113,10 +109,10 @@ func fetchPosts(ctx context.Context) ([]Post, error) {
 		}
 	}()
 
-	var posts []Post
+	var posts []Posts
 	for rows.Next() {
-		var post Post
-		if err := rows.Scan(&post.ID, &post.Title, &post.Excerpt, &post.Body, &post.CreatedAt, &post.UpdatedAt); err != nil {
+		var post Posts
+		if err := rows.Scan(&post.ID, &post.Title, &post.Excerpt, &post.Body, &post.CreatedAt); err != nil {
 			log.Printf("Error scanning row: %v", err)
 			continue
 		}
@@ -126,7 +122,6 @@ func fetchPosts(ctx context.Context) ([]Post, error) {
 		return nil, fmt.Errorf("error iterating over rows: %w", err)
 	}
 
-	// Cache the fetched data in Redis
 	jsonData, err := json.Marshal(posts)
 	if err != nil {
 		log.Printf("Error marshalling posts data: %v", err)
@@ -168,9 +163,6 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set Content-Type header to application/json
-	w.Header().Set("Content-Type", "application/json")
-
 	// Write the JSON response
 	if _, err := w.Write(jsonData); err != nil {
 		log.Printf("Error writing response: %v", err)
@@ -179,32 +171,30 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fetchPost(ctx context.Context, postID string) (Post, error) {
-	// Check if the data is cached in Redis
+func fetchPost(ctx context.Context, postID string) (Posts, error) {
 	cachedData, err := redisClient.Get(ctx, "post:"+postID).Result()
 	if err == nil {
-		var post Post
+		var post Posts
 		if err := json.Unmarshal([]byte(cachedData), &post); err != nil {
-			return Post{}, fmt.Errorf("error unmarshalling cached post data: %w", err)
+			return Posts{}, fmt.Errorf("error unmarshalling cached post data: %w", err)
 		}
 		return post, nil
 	}
 	if !errors.Is(err, redis.Nil) {
-		return Post{}, fmt.Errorf("error fetching post %s from Redis cache: %w", postID, err)
+		return Posts{}, fmt.Errorf("error fetching post %s from Redis cache: %w", postID, err)
 	}
 
-	// Data not found in cache, fetch from the database
-	var post Post
-	err = db.DB.QueryRowContext(ctx, "SELECT * FROM posts WHERE id = $1", postID).
-		Scan(&post.ID, &post.Title, &post.Excerpt, &post.Body, &post.CreatedAt, &post.UpdatedAt)
+	var post Posts
+	err = db.DB.QueryRowContext(ctx,
+		"SELECT id, title, excerpt, body, created_at FROM posts WHERE id = $1", postID).
+		Scan(&post.ID, &post.Title, &post.Excerpt, &post.Body, &post.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Post{}, fmt.Errorf("post %s not found: %w", postID, sql.ErrNoRows)
+			return Posts{}, fmt.Errorf("post %s not found: %w", postID, sql.ErrNoRows)
 		}
-		return Post{}, fmt.Errorf("error querying database: %w", err)
+		return Posts{}, fmt.Errorf("error querying database: %w", err)
 	}
 
-	// Cache the fetched data in Redis
 	jsonData, err := json.Marshal(post)
 	if err != nil {
 		log.Printf("Error marshalling post data: %v", err)
@@ -228,7 +218,7 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Decode JSON payload directly into a Post struct
-	var post Post
+	var post Posts
 	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
 		log.Printf("Error decoding JSON: %v", err)
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
@@ -255,13 +245,13 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate the cache for the list of all posts
 	if err := redisClient.Del(ctx, "posts").Err(); err != nil {
-		log.Printf("Error invalidating cache for posts: %v", err)
+		log.Printf("Error invalidating redis cache for posts: %v", err)
 	}
 
 	respondJSON(w, nil, http.StatusCreated)
 }
 
-func insertPost(post Post) error {
+func insertPost(post Posts) error {
 	_, err := db.DB.Exec("INSERT INTO posts (title, excerpt, body) VALUES ($1, $2, $3)",
 		post.Title, post.Excerpt, post.Body)
 	if err != nil {
@@ -297,7 +287,7 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Decode JSON payload directly into a Post struct
-	var post Post
+	var post Posts
 	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
 		log.Printf("Error decoding JSON: %v", err)
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
@@ -337,7 +327,7 @@ func UpdatePost(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, nil, http.StatusNoContent)
 }
 
-func updatePost(post Post) error {
+func updatePost(post Posts) error {
 	_, err := db.DB.Exec("UPDATE posts SET title = $1, excerpt = $2, body = $3 WHERE id = $4",
 		post.Title, post.Excerpt, post.Body, post.ID)
 	if err != nil {
@@ -390,7 +380,7 @@ func deletePost(id uuid.UUID) error {
 	return nil
 }
 
-func (p *Post) Validate() error {
+func (p *Posts) Validate() error {
 	if p.Title == "" {
 		return errors.New("title cannot be empty")
 	}
@@ -415,6 +405,21 @@ func (p *Post) Validate() error {
 func wordCount(s string) int {
 	words := strings.Fields(s)
 	return len(words)
+}
+
+func (p *Posts) MarshalJSON() ([]byte, error) {
+	type Alias Posts
+	return json.Marshal(&struct {
+		*Alias
+		CreatedAt string `json:"created_at"`
+	}{
+		Alias:     (*Alias)(p),
+		CreatedAt: GetFormattedTime(p.CreatedAt),
+	})
+}
+
+func GetFormattedTime(t time.Time) string {
+	return t.Format("02-01-2006 15:04")
 }
 
 func (e *AppError) Error() string {
