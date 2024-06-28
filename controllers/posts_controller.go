@@ -164,6 +164,9 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func insertPost(ctx context.Context, post models.Post) error {
+	// Ensure ID and CreatedAt are set
+	post.ID = uuid.New()
+	post.CreatedAt = time.Now()
 	_, err := db.DB.ExecContext(ctx, "INSERT INTO posts (id, title, excerpt, body, created_at) VALUES ($1, $2, $3, $4, $5)",
 		post.ID, post.Title, post.Excerpt, post.Body, post.CreatedAt)
 	return err
