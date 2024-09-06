@@ -3,9 +3,10 @@ package routes
 import (
 	"blogklert/controllers"
 	"blogklert/middlewares"
-	"github.com/gorilla/mux"
 	"net/http"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 // Config interface represents the configuration needed for setting up routes.
@@ -21,7 +22,7 @@ func SetupRoutes(config Config) http.Handler {
 
 	// Create a CorsConfig instance
 	corsConfig := &middlewares.CorsConfig{
-		AllowedOrigins:   []string{"http://0.0.0.0:3000", "http://localhost:8000", "https://www.klevertopee.app", "https://obliged-emelina-klevert.koyeb.app"},
+		AllowedOrigins:   []string{"http://0.0.0.0:3000", "http://localhost:8000", "https://www.klevertopee.app", "https://klevert-dev.koyeb.app"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
@@ -31,7 +32,7 @@ func SetupRoutes(config Config) http.Handler {
 	router.Use(middlewares.CorsMiddleware(corsConfig))
 
 	// Initialize rate limiter with limit, window duration, and cleanup interval
-	rateLimiter := middlewares.NewRateLimiter(20, time.Minute, 5*time.Minute)
+	rateLimiter := middlewares.NewRateLimiter(10, time.Minute, 2*time.Minute)
 
 	// Create the middlewares chain
 	middlewareChain := rateLimiter.Limit(middlewares.ValidateBearerToken(config.GetBearerToken())(router))
