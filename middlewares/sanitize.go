@@ -7,11 +7,26 @@ import (
 
 // SanitizeInput sanitizes user input by removing potentially harmful characters and limiting word count.
 func SanitizeInput(input string, maxWordCount int) string {
+	if maxWordCount <= 0 {
+		return "" // Return empty for invalid word limit
+	}
+
 	// Remove potentially harmful characters.
 	sanitizedInput := removeUnsafeCharacters(input)
 
+	// Normalize spaces (trim and reduce multiple spaces)
+	sanitizedInput = normalizeSpaces(sanitizedInput)
+
 	// Limit input length based on word count to prevent buffer overflows and DoS attacks.
 	return truncateByWordCount(sanitizedInput, maxWordCount)
+}
+
+// normalizeSpaces trims leading/trailing spaces and reduces multiple spaces to a single space.
+func normalizeSpaces(input string) string {
+	// Trim leading and trailing spaces
+	input = strings.TrimSpace(input)
+	// Reduce multiple spaces to a single space
+	return strings.Join(strings.Fields(input), " ")
 }
 
 // removeUnsafeCharacters removes potentially harmful characters from the input.
