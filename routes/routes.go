@@ -32,7 +32,7 @@ func SetupRoutes(config Config) http.Handler {
 	router.Use(middlewares.CorsMiddleware(corsConfig))
 
 	// Initialize rate limiter with limit, window duration, and cleanup interval
-	rateLimiter := middlewares.NewRateLimiter(10, time.Minute, 2*time.Minute)
+	rateLimiter := middlewares.NewRateLimiter(15, 1*time.Minute, 1*time.Minute, 1)
 
 	// Create the middlewares chain
 	middlewareChain := rateLimiter.Limit(middlewares.ValidateBearerToken(config.GetBearerToken())(router))
